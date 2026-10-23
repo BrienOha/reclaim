@@ -1,0 +1,29 @@
+@import url('https://fonts.googleapis.com/css2?family=Bangers&family=Caveat:wght@600;700&family=Courier+Prime:ital,wght@0,400;0,700&family=DM+Serif+Display&family=Indie+Flower&family=Lobster&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:ital,wght@0,600;0,800&family=Press+Start+2P&family=Rubik+Mono+One&family=Shadows+Into+Light&family=Space+Grotesk:wght@500;700;800&family=Special+Elite&family=Syne:wght@700;800&display=swap');
+
+:root {
+  --font-display:
+    Spline Sans, Inter, ui-sans-serif, system-ui, sans-serif, Apple Color Emoji, Segoe UI Emoji,
+    Segoe UI Symbol, Noto Color Emoji;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
+  --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
+  --font-serif: Georgia, 'Times New Roman', serif;
+}
+
+/* Stable cross-platform web viewport reset */
+html, body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: #FFFDF8;
+}
+
+#root {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
