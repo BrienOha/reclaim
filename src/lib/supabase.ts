@@ -2,9 +2,12 @@ import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-const rawUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
+const FALLBACK_SUPABASE_URL = 'https://kenlcglgsueqpzksrktd.supabase.co';
+const FALLBACK_SUPABASE_ANON_KEY = 'sb_publishable_g35dop5n2MC95StG2zcX2w_De7F04c3';
+
+const rawUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL;
 const supabaseUrl = rawUrl.replace(/\/rest\/v1\/?$/, '').replace(/\/+$/, '');
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key';
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY;
 
 // Cross-platform custom storage adapter
 const CustomStorageAdapter = {
@@ -47,10 +50,12 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 });
 
 export const isSupabaseConfigured = () => {
+  const url = process.env.EXPO_PUBLIC_SUPABASE_URL || FALLBACK_SUPABASE_URL;
+  const key = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_SUPABASE_ANON_KEY;
   return (
-    process.env.EXPO_PUBLIC_SUPABASE_URL &&
-    !process.env.EXPO_PUBLIC_SUPABASE_URL.includes('placeholder') &&
-    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY &&
-    !process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY.includes('placeholder')
+    Boolean(url) &&
+    !url.includes('placeholder') &&
+    Boolean(key) &&
+    !key.includes('placeholder')
   );
 };
