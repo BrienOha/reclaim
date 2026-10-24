@@ -92,21 +92,25 @@ In your Supabase project dashboard, navigate to **Authentication** → **URL Con
 - **During Local Testing:** Go to **Authentication** → **Providers** → **Email** and temporarily toggle **"Confirm email"** to **OFF**. This allows new test accounts to log in immediately upon sign-up without waiting for confirmation emails.
 - **For Production Deployment:** Turn **"Confirm email"** back **ON** and configure your custom SMTP provider (e.g. Resend, SendGrid).
 
-### 3. Database Schema & Migrations
+### 3. Database Schema & Phase 1 RLS Migration
 In the Supabase **SQL Editor**:
-- **Full Database Setup:** Run [`supabase/migrations/20261023_init_reclaim.sql`](supabase/migrations/20261023_init_reclaim.sql).
-- **Onboarding Migration Only (if updating existing DB):** Run [`supabase/migrations/20261023_add_onboarding.sql`](supabase/migrations/20261023_add_onboarding.sql).
-- **Wipe Test / Dummy Data:** Run [`supabase/wipe_test_data.sql`](supabase/wipe_test_data.sql) to remove all leftover rows tied to test dummy accounts.
+- **Phase 1 Master SQL Script (All RLS Policies, Columns & Indexes):**
+  Run [`supabase/migrations/20261024_phase1_rls_and_schema.sql`](supabase/migrations/20261024_phase1_rls_and_schema.sql).
+  This script:
+  - Enables Row Level Security on all 14 tables.
+  - Implements explicit `SELECT`, `INSERT`, `UPDATE`, `DELETE` policies using `auth.uid() = user_id` with `WITH CHECK`.
+  - Implements join-based subquery policies for child tables (`streak_logs`, `hobby_sessions`, `finance_expenses`, `goal_milestones`).
+  - Grants users read and update access to their own `profiles` row (`auth.uid() = id`).
+  - Adds missing columns (`is_archived` on `journal_entries`) and performance indexes on `user_id` and foreign keys.
 
-### 4. Row Level Security (RLS) Verification
-All tables have RLS enabled with strict policies:
-```sql
-create policy "Users can manage their own data"
-  on public.<table_name>
-  for all using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
-```
-Unauthenticated requests are completely rejected by PostgreSQL.
+### 4. Phase 1 Data Architecture (Supabase + TanStack Query)
+- **Typed Services (`src/services/`):** Dedicated service modules per feature with zero mock fallbacks. Every database query checks PostgreSQL `error` and triggers visual feedback.
+- **TanStack Query Hooks (`src/hooks/queries/`):** React Query hooks providing instant optimistic UI updates with automatic rollback on mutation failure and smart cache invalidation.
+- **Visual Sync Status & Dev Aids:**
+  - `<SyncIndicator />`: Neo-Brutalist status pill showing `Saving…`, `Saved ✓`, or `Failed, retry`.
+  - `<ToastContainer />`: High-contrast error and success toast notifications mounted at root.
+- **Cache-Only Logout:** Signing out strictly clears local browser and device caches (Query Cache, Zustand, local storage) without touching Supabase database rows.
+- **UUID Compliance:** Client generated entities strictly conform to RFC4122 v4 UUID specifications (`src/utils/uuid.ts`), preventing PostgreSQL UUID syntax errors.
 
 ---
 

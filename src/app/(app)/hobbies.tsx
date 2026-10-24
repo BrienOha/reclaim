@@ -18,11 +18,14 @@ import { Chip } from '@/components/ui/Chip';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Sticker } from '@/components/ui/Sticker';
-import { OfflineStore } from '@/lib/offlineStore';
+import { SyncIndicator } from '@/components/ui/SyncIndicator';
+import { useHobbiesData } from '@/hooks/queries/useHobbiesData';
+import { useTasksData } from '@/hooks/queries/useTasksData';
 import { computeFreeTimeStatus } from '@/hooks/useFreeTimeEngine';
 import { Database } from '@/types/database.types';
 import { NeoBorders, NeoRadii, NeoShadows } from '@/constants/theme';
 import { triggerHaptic } from '@/hooks/useHaptics';
+import { generateUUID } from '@/utils/uuid';
 
 type Hobby = Database['public']['Tables']['hobbies']['Row'];
 type Task = Database['public']['Tables']['tasks']['Row'];
@@ -31,6 +34,8 @@ export default function HobbiesScreen() {
   const router = useRouter();
   const { colors } = useThemeStore();
   const { user } = useAuthStore();
+  const { hobbies, createHobby, createSession } = useHobbiesData();
+  const { tasks } = useTasksData();
   const {
     isHobbyTimerActive,
     activeHobbyId,
@@ -40,10 +45,6 @@ export default function HobbiesScreen() {
     tickHobbyTimer,
     stopHobbyTimer,
   } = useTimerStore();
-
-  const [hobbies, setHobbies] = useState<Hobby[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [selectedHobby, setSelectedHobby] = useState<Hobby | null>(null);
 
   // Add / Edit Hobby Modal
   const [hobbyModalVisible, setHobbyModalVisible] = useState(false);
@@ -58,20 +59,6 @@ export default function HobbiesScreen() {
   const [loggedMinutes, setLoggedMinutes] = useState(0);
   const [sessionNotes, setSessionNotes] = useState('');
   const [sessionAttachment, setSessionAttachment] = useState('');
-
-  const loadData = async () => {
-    if (!user) return;
-    const [loadedHobbies, loadedTasks] = await Promise.all([
-      OfflineStore.getHobbies(user.id),
-      OfflineStore.getTasks(user.id),
-    ]);
-    setHobbies(loadedHobbies);
-    setTasks(loadedTasks);
-  };
-
-  useEffect(() => {
-    loadData();
-  }, [user]);
 
   useEffect(() => {
     let interval: any;
@@ -102,21 +89,12 @@ export default function HobbiesScreen() {
   const handleSaveSession = async () => {
     if (!activeHobbyId) return;
 
-    // Update hobby total minutes
-    const updated = hobbies.map((h) => {
-      if (h.id === activeHobbyId) {
-        return {
-          ...h,
-          total_minutes_logged: h.total_minutes_logged + loggedMinutes,
-        };
-      }
-      return h;
+    await createSession({
+      hobby_id: activeHobbyId,
+      duration_minutes: loggedMinutes,
+      notes: sessionNotes.trim() || null,
+      attachment_urls: sessionAttachment.trim() ? [sessionAttachment.trim()] : [],
     });
-
-    setHobbies(updated);
-    if (user) {
-      await OfflineStore.saveHobbies(updated, user.id);
-    }
 
     setTimerNotesModalVisible(false);
     setSessionNotes('');
@@ -132,9 +110,8 @@ export default function HobbiesScreen() {
       .map((s) => s.trim())
       .filter(Boolean);
 
-    const newHobby: Hobby = {
-      id: `hobby-${Date.now()}`,
-      user_id: user.id,
+    await createHobby({
+      id: generateUUID(),
       title: editingTitle.trim(),
       description: editingDesc.trim() || null,
       icon: editingIcon,
@@ -145,12 +122,7 @@ export default function HobbiesScreen() {
       ],
       total_minutes_logged: 0,
       is_active: true,
-      created_at: new Date().toISOString(),
-    };
-
-    const next = [...hobbies, newHobby];
-    setHobbies(next);
-    await OfflineStore.saveHobbies(next, user.id);
+    });
 
     setHobbyModalVisible(false);
     setEditingTitle('');
@@ -170,9 +142,12 @@ export default function HobbiesScreen() {
         {/* Top Header */}
         <View style={styles.header}>
           <View>
-            <Text style={[styles.title, { color: colors.text }]}>
-              CREATIVE HOBBIES
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={[styles.title, { color: colors.text }]}>
+                CREATIVE HOBBIES
+              </Text>
+              <SyncIndicator />
+            </View>
             <Text style={[styles.subtitle, { color: colors.muted }]}>
               Your creation sanctuary. Replaces mindless consumption.
             </Text>

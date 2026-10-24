@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useThemeStore } from '@/store/useThemeStore';
 import { useAuthStore } from '@/hooks/useAuth';
 import { BrandedSplash } from '@/components/ui/BrandedSplash';
+import { ToastContainer } from '@/components/ui/Toast';
 import '../global.css';
 
 export const queryClient = new QueryClient();
@@ -22,6 +23,7 @@ export default function RootLayout() {
       <View style={[styles.rootContainer, { backgroundColor: colors.bg }]}>
         <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
         {isLoading ? <BrandedSplash /> : <Slot />}
+        <ToastContainer />
       </View>
     </QueryClientProvider>
   );

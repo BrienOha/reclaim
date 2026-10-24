@@ -20,10 +20,12 @@ import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Sticker } from '@/components/ui/Sticker';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { OfflineStore } from '@/lib/offlineStore';
+import { SyncIndicator } from '@/components/ui/SyncIndicator';
+import { useJournalData } from '@/hooks/queries/useJournalData';
 import { Database, CanvasItem } from '@/types/database.types';
 import { JOURNAL_FONTS, JournalFont, NeoBorders, NeoRadii, NeoShadows } from '@/constants/theme';
 import { triggerHaptic } from '@/hooks/useHaptics';
+import { generateUUID } from '@/utils/uuid';
 
 type JournalEntry = Database['public']['Tables']['journal_entries']['Row'];
 
@@ -42,7 +44,7 @@ const STICKER_PACK = [
 export default function JournalScreen() {
   const { colors } = useThemeStore();
   const { user } = useAuthStore();
-  const [entries, setEntries] = useState<JournalEntry[]>([]);
+  const { entries, isLoading, createEntry, updateEntry, deleteEntry } = useJournalData();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMoodFilter, setSelectedMoodFilter] = useState<number | null>(null);
 
@@ -62,16 +64,6 @@ export default function JournalScreen() {
 
   // Export success banner
   const [exportedBanner, setExportedBanner] = useState(false);
-
-  const loadEntries = async () => {
-    if (!user) return;
-    const loaded = await OfflineStore.getJournalEntries(user.id);
-    setEntries(loaded);
-  };
-
-  useEffect(() => {
-    loadEntries();
-  }, [user]);
 
   const pushCanvasState = (newItems: CanvasItem[]) => {
     setHistoryStack((prev) => [...prev, canvasItems]);
@@ -129,7 +121,7 @@ export default function JournalScreen() {
   const handleAddSticker = (sticker: typeof STICKER_PACK[0]) => {
     triggerHaptic('success');
     const newItem: CanvasItem = {
-      id: `item-${Date.now()}`,
+      id: generateUUID(),
       type: 'sticker',
       stickerKey: sticker.text,
       x: 30 + Math.random() * 40,
@@ -153,7 +145,7 @@ export default function JournalScreen() {
     if (!result.canceled && result.assets[0].uri) {
       triggerHaptic('success');
       const newItem: CanvasItem = {
-        id: `photo-${Date.now()}`,
+        id: generateUUID(),
         type: 'photo',
         uri: result.assets[0].uri,
         x: 40,
@@ -224,7 +216,7 @@ export default function JournalScreen() {
 
     const dup: CanvasItem = {
       ...item,
-      id: `dup-${Date.now()}`,
+      id: generateUUID(),
       x: item.x + 20,
       y: item.y + 20,
       zIndex: canvasItems.length + 1,
@@ -238,27 +230,27 @@ export default function JournalScreen() {
     if (!title.trim() || !user) return;
     triggerHaptic('success');
 
-    const entryId = editingId || `journal-${Date.now()}`;
-    const newEntry: JournalEntry = {
-      id: entryId,
-      user_id: user.id,
-      entry_date: new Date().toISOString().split('T')[0],
-      title: title.trim(),
-      body: body.trim(),
-      mood,
-      font_family: selectedFont,
-      canvas_layout: canvasItems,
-      exported_image_url: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    const nextEntries = editingId
-      ? entries.map((e) => (e.id === editingId ? newEntry : e))
-      : [newEntry, ...entries];
-
-    setEntries(nextEntries);
-    await OfflineStore.saveJournalEntries(nextEntries, user.id);
+    if (editingId) {
+      await updateEntry({
+        entryId: editingId,
+        updates: {
+          title: title.trim(),
+          body: body.trim(),
+          mood,
+          font_family: selectedFont,
+          canvas_layout: canvasItems,
+        },
+      });
+    } else {
+      await createEntry({
+        title: title.trim(),
+        body: body.trim(),
+        mood,
+        font_family: selectedFont,
+        canvas_layout: canvasItems,
+        entry_date: new Date().toISOString().split('T')[0],
+      });
+    }
     setEditorStep(null);
   };
 
@@ -283,9 +275,12 @@ export default function JournalScreen() {
         {/* Top Header */}
         <View style={styles.header}>
           <View>
-            <Text style={[styles.title, { color: colors.text }]}>
-              CUSTOMIZABLE JOURNAL
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={[styles.title, { color: colors.text }]}>
+                CUSTOMIZABLE JOURNAL
+              </Text>
+              <SyncIndicator />
+            </View>
             <Text style={[styles.subtitle, { color: colors.muted }]}>
               Step 1: Write text • Step 2: Decorate with stickers & photos.
             </Text>
@@ -703,9 +698,22 @@ export default function JournalScreen() {
                     rotation={1}
                   />
                 )}
-                <Text style={[styles.entryActionText, { color: colors.hotPink }]}>
-                  OPEN & DECORATE →
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Text style={[styles.entryActionText, { color: colors.hotPink }]}>
+                    OPEN & DECORATE →
+                  </Text>
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      triggerHaptic('warning');
+                      deleteEntry(entry.id);
+                    }}
+                    style={{ padding: 4 }}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="trash-outline" size={18} color={colors.hotPink} />
+                  </Pressable>
+                </View>
               </View>
             </Card>
           ))

@@ -5,7 +5,9 @@ import { useAuthStore } from '@/hooks/useAuth';
 import { useThemeStore } from '@/store/useThemeStore';
 import { ReclaimNavBar } from '@/components/navigation/ReclaimNavBar';
 import { OfflineStore } from '@/lib/offlineStore';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { isSupabaseConfigured } from '@/lib/supabase';
+
+import { ProfileService } from '@/services/profile.service';
 
 export default function AppLayout() {
   const { user } = useAuthStore();
@@ -34,13 +36,8 @@ export default function AppLayout() {
 
         // Check Supabase profiles table if online
         if (isSupabaseConfigured()) {
-          const { data } = await supabase
-            .from('profiles')
-            .select('has_completed_onboarding')
-            .eq('id', user.id)
-            .single();
-
-          if (data?.has_completed_onboarding) {
+          const profile = await ProfileService.getProfile(user.id);
+          if (profile?.has_completed_onboarding) {
             await OfflineStore.setOnboardingCompleted(true, user.id);
             setOnboarded(true);
             setCheckingOnboarding(false);

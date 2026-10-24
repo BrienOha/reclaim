@@ -20,7 +20,9 @@ import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Sticker } from '@/components/ui/Sticker';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { OfflineStore } from '@/lib/offlineStore';
+import { SyncIndicator } from '@/components/ui/SyncIndicator';
+import { useGoalsData } from '@/hooks/queries/useGoalsData';
+import { TasksService } from '@/services/tasks.service';
 import { Database } from '@/types/database.types';
 import { NeoBorders, NeoRadii, NeoShadows } from '@/constants/theme';
 import { triggerHaptic } from '@/hooks/useHaptics';
@@ -37,9 +39,17 @@ export default function GoalsScreen() {
   const { user } = useAuthStore();
 
   const [activeTier, setActiveTier] = useState<TierTab>('small');
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [expandedGoalId, setExpandedGoalId] = useState<string | null>(null);
+
+  const {
+    goals,
+    milestones,
+    isLoading,
+    createGoal,
+    updateGoal,
+    deleteGoal,
+    updateMilestone,
+  } = useGoalsData();
 
   // Add Goal Modal State
   const [addGoalModalVisible, setAddGoalModalVisible] = useState(false);
@@ -52,44 +62,25 @@ export default function GoalsScreen() {
   // Celebration banner
   const [showCelebration, setShowCelebration] = useState(false);
 
-  const loadGoalsData = async () => {
-    if (!user) return;
-    const [loadedGoals, loadedMilestones] = await Promise.all([
-      OfflineStore.getGoals(user.id),
-      OfflineStore.getMilestones(user.id),
-    ]);
-    setGoals(loadedGoals);
-    setMilestones(loadedMilestones);
-  };
-
-  useEffect(() => {
-    loadGoalsData();
-  }, [user]);
-
   const handleToggleMilestone = async (milestoneId: string, completed: boolean) => {
     triggerHaptic(completed ? 'success' : 'light');
     if (completed) {
       setShowCelebration(true);
       setTimeout(() => setShowCelebration(false), 3000);
     }
-
-    const updated = milestones.map((m) =>
-      m.id === milestoneId ? { ...m, is_completed: completed } : m
-    );
-    setMilestones(updated);
-    await OfflineStore.saveMilestones(updated, user?.id);
+    await updateMilestone({
+      milestoneId,
+      updates: { is_completed: completed },
+    });
   };
 
   // Convert milestone to To-Do task
   const handleLinkToTask = async (milestone: Milestone, goalTitle: string) => {
     if (!user) return;
     triggerHaptic('success');
-    const existingTasks = await OfflineStore.getTasks(user.id);
 
-    const newTask: Task = {
-      id: `task-${Date.now()}`,
+    await TasksService.createTask({
       user_id: user.id,
-      list_id: null,
       goal_id: milestone.goal_id,
       title: `[Goal: ${goalTitle}] ${milestone.title}`,
       notes: 'Generated from Goal Roadmap Milestone',
@@ -98,38 +89,34 @@ export default function GoalsScreen() {
       tags: ['Goal'],
       subtasks: [],
       is_completed: false,
-      completed_at: null,
       is_recurring: false,
-      recurrence_rule: null,
       position: 0,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    const next = [newTask, ...existingTasks];
-    await OfflineStore.saveTasks(next, user.id);
+    });
     router.push('/todos' as any);
   };
 
   // Pin as Goal of the Week
   const handlePinGoal = async (goalId: string) => {
     triggerHaptic('medium');
-    const updated = goals.map((g) => ({
-      ...g,
-      is_pinned_of_week: g.id === goalId,
-    }));
-    setGoals(updated);
-    await OfflineStore.saveGoals(updated, user?.id);
+    await Promise.all(
+      goals.map((g) =>
+        updateGoal({
+          goalId: g.id,
+          updates: { is_pinned_of_week: g.id === goalId },
+        })
+      )
+    );
   };
 
   // Archive Goal
   const handleToggleArchive = async (goalId: string) => {
     triggerHaptic('light');
-    const updated = goals.map((g) =>
-      g.id === goalId ? { ...g, is_archived: !g.is_archived } : g
-    );
-    setGoals(updated);
-    await OfflineStore.saveGoals(updated, user?.id);
+    const target = goals.find((g) => g.id === goalId);
+    if (!target) return;
+    await updateGoal({
+      goalId,
+      updates: { is_archived: !target.is_archived },
+    });
   };
 
   // Add new Goal
@@ -137,45 +124,22 @@ export default function GoalsScreen() {
     if (!newTitle.trim() || !user) return;
     triggerHaptic('success');
 
-    const goalId = `goal-${Date.now()}`;
-    const newGoal: Goal = {
-      id: goalId,
-      user_id: user.id,
-      tier: newTier,
-      title: newTitle.trim(),
-      description: newDesc.trim() || null,
-      category: newCategory,
-      target_date: null,
-      cover_image_url: null,
-      is_pinned_of_week: false,
-      is_archived: false,
-      completed_at: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    const nextMilestones = newMilestonesText
+    const milestoneTitles = newMilestonesText
       .split('\n')
       .map((t) => t.trim())
-      .filter(Boolean)
-      .map((t, idx) => ({
-        id: `ms-${Date.now()}-${idx}`,
-        goal_id: goalId,
-        user_id: user.id,
-        title: t,
-        is_completed: false,
-        linked_task_id: null,
-        position: idx,
-        created_at: new Date().toISOString(),
-      }));
+      .filter(Boolean);
 
-    const nextGoals = [newGoal, ...goals];
-    const allMilestones = [...milestones, ...nextMilestones];
-
-    setGoals(nextGoals);
-    setMilestones(allMilestones);
-    await OfflineStore.saveGoals(nextGoals, user.id);
-    await OfflineStore.saveMilestones(allMilestones, user.id);
+    await createGoal({
+      goal: {
+        tier: newTier,
+        title: newTitle.trim(),
+        description: newDesc.trim() || null,
+        category: newCategory,
+        is_pinned_of_week: false,
+        is_archived: false,
+      },
+      milestoneTitles,
+    });
 
     setAddGoalModalVisible(false);
     setNewTitle('');
@@ -196,9 +160,12 @@ export default function GoalsScreen() {
         {/* Top Header */}
         <View style={styles.header}>
           <View>
-            <Text style={[styles.title, { color: colors.text }]}>
-              3-TIER GOAL TRACKER
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={[styles.title, { color: colors.text }]}>
+                3-TIER GOAL TRACKER
+              </Text>
+              <SyncIndicator />
+            </View>
             <Text style={[styles.subtitle, { color: colors.muted }]}>
               Small, Big, and Life Aspirations with roadmap milestones.
             </Text>
@@ -392,12 +359,24 @@ export default function GoalsScreen() {
 
                 {/* Card Footer Actions */}
                 <View style={styles.goalFooter}>
-                  <Button
-                    title={goal.is_archived ? 'Unarchive' : 'Archive Goal'}
-                    onPress={() => handleToggleArchive(goal.id)}
-                    variant="ghost"
-                    size="sm"
-                  />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Button
+                      title={goal.is_archived ? 'Unarchive' : 'Archive Goal'}
+                      onPress={() => handleToggleArchive(goal.id)}
+                      variant="ghost"
+                      size="sm"
+                    />
+                    <Pressable
+                      onPress={() => {
+                        triggerHaptic('warning');
+                        deleteGoal(goal.id);
+                      }}
+                      style={{ padding: 4 }}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="trash-outline" size={18} color={colors.hotPink} />
+                    </Pressable>
+                  </View>
                   {!goal.is_pinned_of_week && (
                     <Button
                       title="Pin As Goal Of Week"

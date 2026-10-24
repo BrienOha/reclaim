@@ -20,10 +20,12 @@ import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Sticker } from '@/components/ui/Sticker';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { OfflineStore } from '@/lib/offlineStore';
+import { SyncIndicator } from '@/components/ui/SyncIndicator';
+import { useTasksData } from '@/hooks/queries/useTasksData';
 import { Database } from '@/types/database.types';
 import { NeoBorders, NeoRadii, NeoShadows } from '@/constants/theme';
 import { triggerHaptic } from '@/hooks/useHaptics';
+import { generateUUID } from '@/utils/uuid';
 
 type Task = Database['public']['Tables']['tasks']['Row'];
 
@@ -33,7 +35,8 @@ type ViewMode = 'list' | 'timeline';
 export default function TodosScreen() {
   const { colors } = useThemeStore();
   const { user } = useAuthStore();
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const { tasks, createTask, updateTask, deleteTask } = useTasksData();
+
   const [filter, setFilter] = useState<FilterType>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [quickTitle, setQuickTitle] = useState('');
@@ -44,79 +47,44 @@ export default function TodosScreen() {
   const [deletedTask, setDeletedTask] = useState<Task | null>(null);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
 
-  // Edit / Add Task Modal
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editingTask, setEditingTask] = useState<Partial<Task> | null>(null);
-
   // New subtask input for expanded task
   const [subtaskInput, setSubtaskInput] = useState('');
 
-  const loadTasks = async () => {
-    if (!user) return;
-    const loaded = await OfflineStore.getTasks(user.id);
-    setTasks(loaded);
-  };
-
-  useEffect(() => {
-    loadTasks();
-  }, [user]);
-
-  const saveAndSetTasks = async (nextTasks: Task[]) => {
-    if (!user) return;
-    setTasks(nextTasks);
-    await OfflineStore.saveTasks(nextTasks, user.id);
-  };
-
   const handleToggleTask = async (taskId: string, completed: boolean) => {
     triggerHaptic(completed ? 'success' : 'light');
-    const updated = tasks.map((t) =>
-      t.id === taskId
-        ? {
-            ...t,
-            is_completed: completed,
-            completed_at: completed ? new Date().toISOString() : null,
-          }
-        : t
-    );
-    await saveAndSetTasks(updated);
+    await updateTask({
+      taskId,
+      updates: {
+        is_completed: completed,
+        completed_at: completed ? new Date().toISOString() : null,
+      },
+    });
   };
 
   const handleQuickAdd = async () => {
     if (!quickTitle.trim() || !user) return;
     triggerHaptic('success');
 
-    const newTask: Task = {
-      id: `task-${Date.now()}`,
-      user_id: user.id,
-      list_id: null,
-      goal_id: null,
+    await createTask({
+      id: generateUUID(),
       title: quickTitle.trim(),
       notes: null,
-      deadline: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(), // Due today by default
+      deadline: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
       priority: quickPriority,
       tags: ['Personal'],
       subtasks: [],
       is_completed: false,
-      completed_at: null,
-      is_recurring: false,
-      recurrence_rule: null,
       position: tasks.length,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    const next = [newTask, ...tasks];
-    await saveAndSetTasks(next);
+    });
     setQuickTitle('');
   };
 
   const handleDeleteTask = async (task: Task) => {
     triggerHaptic('warning');
-    const filtered = tasks.filter((t) => t.id !== task.id);
-    await saveAndSetTasks(filtered);
+    setDeletedTask(task);
+    await deleteTask(task.id);
 
     // Show undo snackbar
-    setDeletedTask(task);
     setSnackbarVisible(true);
     setTimeout(() => {
       setSnackbarVisible(false);
@@ -126,41 +94,50 @@ export default function TodosScreen() {
   const handleUndoDelete = async () => {
     if (!deletedTask) return;
     triggerHaptic('success');
-    const restored = [deletedTask, ...tasks];
-    await saveAndSetTasks(restored);
+    await createTask({
+      id: deletedTask.id,
+      title: deletedTask.title,
+      notes: deletedTask.notes,
+      deadline: deletedTask.deadline,
+      priority: deletedTask.priority,
+      tags: deletedTask.tags,
+      subtasks: deletedTask.subtasks,
+      is_completed: deletedTask.is_completed,
+      completed_at: deletedTask.completed_at,
+      position: deletedTask.position,
+    });
     setDeletedTask(null);
     setSnackbarVisible(false);
   };
 
   const handleToggleSubtask = async (taskId: string, subtaskId: string) => {
-    const updated = tasks.map((t) => {
-      if (t.id === taskId) {
-        const nextSubtasks = t.subtasks.map((st) =>
-          st.id === subtaskId ? { ...st, completed: !st.completed } : st
-        );
-        return { ...t, subtasks: nextSubtasks };
-      }
-      return t;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    const nextSubtasks = task.subtasks.map((st) =>
+      st.id === subtaskId ? { ...st, completed: !st.completed } : st
+    );
+    await updateTask({
+      taskId,
+      updates: { subtasks: nextSubtasks },
     });
-    await saveAndSetTasks(updated);
   };
 
   const handleAddSubtask = async (taskId: string) => {
     if (!subtaskInput.trim()) return;
     triggerHaptic('light');
 
-    const updated = tasks.map((t) => {
-      if (t.id === taskId) {
-        const nextSubtasks = [
-          ...t.subtasks,
-          { id: `sub-${Date.now()}`, title: subtaskInput.trim(), completed: false },
-        ];
-        return { ...t, subtasks: nextSubtasks };
-      }
-      return t;
-    });
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
 
-    await saveAndSetTasks(updated);
+    const nextSubtasks = [
+      ...task.subtasks,
+      { id: generateUUID(), title: subtaskInput.trim(), completed: false },
+    ];
+
+    await updateTask({
+      taskId,
+      updates: { subtasks: nextSubtasks },
+    });
     setSubtaskInput('');
   };
 
@@ -209,9 +186,12 @@ export default function TodosScreen() {
         {/* Top Header */}
         <View style={styles.header}>
           <View>
-            <Text style={[styles.title, { color: colors.text }]}>
-              NOTION-LIKE TASKS
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={[styles.title, { color: colors.text }]}>
+                NOTION-LIKE TASKS
+              </Text>
+              <SyncIndicator />
+            </View>
             <Text style={[styles.subtitle, { color: colors.muted }]}>
               Clear your priorities to unlock your Free Creation Time.
             </Text>

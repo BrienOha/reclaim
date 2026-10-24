@@ -15,11 +15,9 @@ import { useCurrencyStore, AVAILABLE_CURRENCIES } from '@/store/useCurrencyStore
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Chip } from '@/components/ui/Chip';
-import { Checkbox } from '@/components/ui/Checkbox';
 import { Sticker } from '@/components/ui/Sticker';
-import { OfflineStore, PRESET_HOBBY_TEMPLATES } from '@/lib/offlineStore';
-import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { useProfileData } from '@/hooks/queries/useProfileData';
+import { PRESET_HOBBY_TEMPLATES, OfflineStore } from '@/lib/offlineStore';
 import { NeoBorders, NeoRadii, NeoShadows } from '@/constants/theme';
 import { triggerHaptic } from '@/hooks/useHaptics';
 
@@ -94,6 +92,8 @@ export default function OnboardingScreen() {
     setCustomHobby('');
   };
 
+  const { completeOnboarding } = useProfileData();
+
   const handleFinishOnboarding = async () => {
     if (!user) return;
     triggerHaptic('heavy');
@@ -103,112 +103,55 @@ export default function OnboardingScreen() {
       const allowanceNum = parseFloat(allowance) || 0;
       const savingsNum = parseFloat(savings) || 0;
 
-      // 1. Create real initial streaks for selected habits
-      const streaksToInsert = selectedHabits.map((habitName, idx) => {
+      const currentMonday = new Date();
+      currentMonday.setDate(currentMonday.getDate() - ((currentMonday.getDay() + 6) % 7));
+      const weekDateStr = currentMonday.toISOString().split('T')[0];
+
+      // Prepare streaks
+      const streaksPayload = selectedHabits.map((habitName) => {
         const found = POPULAR_HABITS_TO_QUIT.find((h) => h.name === habitName);
         return {
-          id: `streak-${Date.now()}-${idx}`,
-          user_id: user.id,
           habit_name: habitName,
           category: found?.category || 'General',
           started_at: new Date().toISOString(),
           longest_streak_days: 0,
           icon: found?.icon || 'shield',
           accent_color: found?.color || '#FF5388',
-          created_at: new Date().toISOString(),
         };
       });
 
-      // 2. Create real initial hobbies
-      const hobbiesToInsert = selectedHobbies.map((hobbyTitle, idx) => {
+      // Prepare hobbies
+      const hobbiesPayload = selectedHobbies.map((hobbyTitle) => {
         const template = PRESET_HOBBY_TEMPLATES.find((h) => h.title === hobbyTitle);
         return {
-          id: `hobby-${Date.now()}-${idx}`,
-          user_id: user.id,
           title: hobbyTitle,
           description: template?.description || 'Personal craft practice',
           icon: template?.icon || 'color-palette',
           color: template?.color || '#FFE600',
           mini_projects: template?.mini_projects || [],
           creative_challenges: template?.creative_challenges || [],
-          total_minutes_logged: 0,
-          is_active: true,
-          created_at: new Date().toISOString(),
         };
       });
 
-      // Save to local offline store
-      await OfflineStore.saveStreaks(streaksToInsert, user.id);
-      await OfflineStore.saveHobbies(hobbiesToInsert, user.id);
-
-      // Create initial finance week
-      const currentMonday = new Date();
-      currentMonday.setDate(currentMonday.getDate() - ((currentMonday.getDay() + 6) % 7));
-      const weekDateStr = currentMonday.toISOString().split('T')[0];
-
-      await OfflineStore.saveFinanceWeek(
-        {
-          id: `week-${weekDateStr}-${Date.now()}`,
-          user_id: user.id,
-          week_start_date: weekDateStr,
-          allowance_amount: allowanceNum,
-          savings_allocation: savingsNum,
-          currency: currency.code,
-          created_at: new Date().toISOString(),
+      // Complete onboarding via ProfileService which writes directly to Supabase with toast feedback
+      await completeOnboarding({
+        currency: currency.code,
+        streaks: streaksPayload,
+        hobbies: hobbiesPayload,
+        weeklyBudget: {
+          weekStartDate: weekDateStr,
+          allowance: allowanceNum,
+          savings: savingsNum,
         },
-        user.id
-      );
+      });
 
-      // Update Supabase profiles table if online
-      if (isSupabaseConfigured()) {
-        await supabase.from('profiles').upsert({
-          id: user.id,
-          display_name: user.user_metadata?.full_name || user.email?.split('@')[0],
-          currency: currency.code,
-          has_completed_onboarding: true,
-          updated_at: new Date().toISOString(),
-        });
-
-        // Insert streaks and hobbies in cloud
-        if (streaksToInsert.length > 0) {
-          await supabase.from('streaks').insert(
-            streaksToInsert.map((s) => ({
-              user_id: user.id,
-              habit_name: s.habit_name,
-              category: s.category,
-              started_at: s.started_at,
-              longest_streak_days: s.longest_streak_days,
-              icon: s.icon,
-              accent_color: s.accent_color,
-            }))
-          );
-        }
-
-        if (hobbiesToInsert.length > 0) {
-          await supabase.from('hobbies').insert(
-            hobbiesToInsert.map((h) => ({
-              user_id: user.id,
-              title: h.title,
-              description: h.description,
-              icon: h.icon,
-              color: h.color,
-              mini_projects: h.mini_projects,
-              creative_challenges: h.creative_challenges,
-              total_minutes_logged: 0,
-              is_active: true,
-            }))
-          );
-        }
-      }
-
-      // Mark completed locally
+      // Sync local offline cache flag
       await OfflineStore.setOnboardingCompleted(true, user.id);
 
       // Navigate to Home dashboard!
       router.replace('/' as any);
     } catch (e) {
       console.error('Error during onboarding save:', e);
-      // Fallback: still mark completed and navigate
       await OfflineStore.setOnboardingCompleted(true, user.id);
       router.replace('/' as any);
     } finally {

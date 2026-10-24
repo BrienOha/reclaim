@@ -15,13 +15,12 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Sticker } from '@/components/ui/Sticker';
 import { BreathingCircle } from '@/components/dashboard/BreathingCircle';
-import { OfflineStore } from '@/lib/offlineStore';
+import { SyncIndicator } from '@/components/ui/SyncIndicator';
+import { useStreaksData } from '@/hooks/queries/useStreaksData';
+import { useHobbiesData } from '@/hooks/queries/useHobbiesData';
 import { Database } from '@/types/database.types';
 import { NeoBorders, NeoRadii, NeoShadows } from '@/constants/theme';
 import { triggerHaptic } from '@/hooks/useHaptics';
-
-type Hobby = Database['public']['Tables']['hobbies']['Row'];
-type Streak = Database['public']['Tables']['streaks']['Row'];
 
 export default function UrgeRescueScreen() {
   const router = useRouter();
@@ -36,27 +35,12 @@ export default function UrgeRescueScreen() {
     stopUrgeCountdown,
   } = useTimerStore();
 
-  const [hobbies, setHobbies] = useState<Hobby[]>([]);
-  const [streaks, setStreaks] = useState<Streak[]>([]);
+  const { streaks, updateStreak, createStreakLog } = useStreaksData();
+  const { hobbies } = useHobbiesData();
   const [loggedOutcome, setLoggedOutcome] = useState<'resisted' | 'slipped' | null>(null);
-
-  const loadContext = async () => {
-    if (!user) return;
-    const [h, s] = await Promise.all([
-      OfflineStore.getHobbies(user.id),
-      OfflineStore.getStreaks(user.id),
-    ]);
-    setHobbies(h);
-    setStreaks(s);
-  };
-
-  useEffect(() => {
-    loadContext();
-  }, [user]);
 
   useEffect(() => {
     startUrgeCountdown();
-    loadContext();
 
     const interval = setInterval(() => {
       tickUrgeCountdown();
@@ -77,25 +61,28 @@ export default function UrgeRescueScreen() {
     setLoggedOutcome(outcome);
     stopUrgeCountdown();
 
-    // Log to streak logs
-    const logs = await OfflineStore.getStreakLogs(user.id);
-    logs.push({
-      id: `log-${Date.now()}`,
-      user_id: user.id,
-      streak_id: streaks[0]?.id || 'streak-1',
-      event_type: outcome === 'resisted' ? 'urge_resisted' : 'restarted',
-      mood: outcome === 'resisted' ? 5 : 2,
-      trigger_reason: 'Craving emergency session',
-      notes: outcome === 'resisted' ? 'Resisted craving using 10-min breathing & creative pivot!' : 'Experienced a slip, restarting now.',
-      occurred_at: new Date().toISOString(),
-    });
-    await OfflineStore.saveStreakLogs(logs, user.id);
+    const streakId = streaks[0]?.id;
+    if (streakId) {
+      await createStreakLog({
+        streak_id: streakId,
+        event_type: outcome === 'resisted' ? 'urge_resisted' : 'restarted',
+        mood: outcome === 'resisted' ? 5 : 2,
+        trigger_reason: 'Craving emergency session',
+        notes:
+          outcome === 'resisted'
+            ? 'Resisted craving using 10-min breathing & creative pivot!'
+            : 'Experienced a slip, restarting now.',
+        occurred_at: new Date().toISOString(),
+      });
 
-    if (outcome === 'slipped' && streaks.length > 0) {
-      const updatedStreaks = streaks.map((s, idx) =>
-        idx === 0 ? { ...s, started_at: new Date().toISOString() } : s
-      );
-      await OfflineStore.saveStreaks(updatedStreaks, user.id);
+      if (outcome === 'slipped') {
+        await updateStreak({
+          streakId,
+          updates: {
+            started_at: new Date().toISOString(),
+          },
+        });
+      }
     }
   };
 
@@ -113,7 +100,10 @@ export default function UrgeRescueScreen() {
             variant="outline"
             size="sm"
           />
-          <Sticker text="URGE SURFING MODE" color="pink" rotation={-1} />
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Sticker text="URGE SURFING MODE" color="pink" rotation={-1} />
+            <SyncIndicator />
+          </View>
         </View>
 
         {!loggedOutcome ? (

@@ -21,7 +21,8 @@ import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Sticker } from '@/components/ui/Sticker';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { OfflineStore } from '@/lib/offlineStore';
+import { SyncIndicator } from '@/components/ui/SyncIndicator';
+import { useFinanceData } from '@/hooks/queries/useFinanceData';
 import { Database } from '@/types/database.types';
 import { NeoBorders, NeoRadii, NeoShadows } from '@/constants/theme';
 import { triggerHaptic } from '@/hooks/useHaptics';
@@ -46,9 +47,19 @@ export default function FinanceScreen() {
     monday.setDate(now.getDate() - diff);
     return monday.toISOString().split('T')[0];
   });
-  const [weekData, setWeekData] = useState<FinanceWeek | null>(null);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [wishlist, setWishlist] = useState<Wishlist[]>([]);
+
+  const {
+    weekData,
+    expenses,
+    wishlist,
+    isLoading,
+    saveBudget,
+    createExpense,
+    deleteExpense,
+    createWishlistItem,
+    updateWishlistItem,
+    deleteWishlistItem,
+  } = useFinanceData(currentWeekStartDate);
 
   // Modals
   const [addExpenseModalVisible, setAddExpenseModalVisible] = useState(false);
@@ -68,24 +79,12 @@ export default function FinanceScreen() {
   // Savings Projector "What-if" slider extra amount
   const [extraWeeklySavings, setExtraWeeklySavings] = useState(500);
 
-  const loadFinanceData = async () => {
-    if (!user) return;
-    const [week, loadedExpenses, loadedWishlist] = await Promise.all([
-      OfflineStore.getFinanceWeek(currentWeekStartDate, user.id),
-      OfflineStore.getExpenses(user.id),
-      OfflineStore.getWishlist(user.id),
-    ]);
-
-    setWeekData(week);
-    setAllowanceInput(String(week.allowance_amount));
-    setSavingsInput(String(week.savings_allocation));
-    setExpenses(loadedExpenses);
-    setWishlist(loadedWishlist);
-  };
-
   useEffect(() => {
-    loadFinanceData();
-  }, [currentWeekStartDate, user]);
+    if (weekData) {
+      setAllowanceInput(String(weekData.allowance_amount));
+      setSavingsInput(String(weekData.savings_allocation));
+    }
+  }, [weekData]);
 
   const allowance = weekData?.allowance_amount || 0;
   const savings = weekData?.savings_allocation || 0;
@@ -102,20 +101,13 @@ export default function FinanceScreen() {
     if (isNaN(amt) || amt <= 0) return;
     triggerHaptic('success');
 
-    const newExpense: Expense = {
-      id: `exp-${Date.now()}`,
-      user_id: user.id,
-      week_id: weekData?.id || 'week-curr',
+    await createExpense({
+      week_id: weekData?.id,
       expense_date: new Date().toISOString().split('T')[0],
       amount: amt,
       category: expCategory,
       note: expNote.trim() || null,
-      created_at: new Date().toISOString(),
-    };
-
-    const next = [newExpense, ...expenses];
-    setExpenses(next);
-    await OfflineStore.saveExpenses(next, user.id);
+    });
 
     setAddExpenseModalVisible(false);
     setExpAmount('');
@@ -128,15 +120,12 @@ export default function FinanceScreen() {
     const a = parseFloat(allowanceInput) || allowance;
     const s = parseFloat(savingsInput) || savings;
 
-    if (weekData) {
-      const updatedWeek = {
-        ...weekData,
-        allowance_amount: a,
-        savings_allocation: s,
-      };
-      setWeekData(updatedWeek);
-      await OfflineStore.saveFinanceWeek(updatedWeek, user.id);
-    }
+    await saveBudget({
+      id: weekData?.id,
+      allowance_amount: a,
+      savings_allocation: s,
+      currency: currency.code || 'PHP',
+    });
     setEditBudgetModalVisible(false);
   };
 
@@ -147,22 +136,13 @@ export default function FinanceScreen() {
     if (!wishItemName.trim() || isNaN(p) || p <= 0) return;
     triggerHaptic('success');
 
-    const newItem: Wishlist = {
-      id: `wish-${Date.now()}`,
-      user_id: user.id,
+    await createWishlistItem({
       item_name: wishItemName.trim(),
       price: p,
       image_url: wishImage.trim() || null,
-      link_url: null,
       priority: 'high',
       is_bought: false,
-      bought_at: null,
-      created_at: new Date().toISOString(),
-    };
-
-    const next = [newItem, ...wishlist];
-    setWishlist(next);
-    await OfflineStore.saveWishlist(next, user.id);
+    });
 
     setAddWishlistModalVisible(false);
     setWishItemName('');
@@ -174,17 +154,13 @@ export default function FinanceScreen() {
   const handleToggleBought = async (item: Wishlist) => {
     if (!user) return;
     triggerHaptic('success');
-    const updated = wishlist.map((w) =>
-      w.id === item.id
-        ? {
-            ...w,
-            is_bought: !w.is_bought,
-            bought_at: !w.is_bought ? new Date().toISOString() : null,
-          }
-        : w
-    );
-    setWishlist(updated);
-    await OfflineStore.saveWishlist(updated, user.id);
+    await updateWishlistItem({
+      itemId: item.id,
+      updates: {
+        is_bought: !item.is_bought,
+        bought_at: !item.is_bought ? new Date().toISOString() : null,
+      },
+    });
   };
 
   // Daily Chart Calculations
@@ -218,9 +194,12 @@ export default function FinanceScreen() {
         {/* Top Header */}
         <View style={styles.header}>
           <View>
-            <Text style={[styles.title, { color: colors.text }]}>
-              WEEKLY FINANCE TRACKER
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={[styles.title, { color: colors.text }]}>
+                WEEKLY FINANCE TRACKER
+              </Text>
+              <SyncIndicator />
+            </View>
             <Text style={[styles.subtitle, { color: colors.muted }]}>
               Organized in weeks • Fuel creation & savings goals.
             </Text>
@@ -384,9 +363,21 @@ export default function FinanceScreen() {
                     </Text>
                   </View>
                 </View>
-                <Text style={[styles.expAmount, { color: colors.text }]}>
-                  -{formatAmount(Number(exp.amount))}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Text style={[styles.expAmount, { color: colors.text }]}>
+                    -{formatAmount(Number(exp.amount))}
+                  </Text>
+                  <Pressable
+                    onPress={() => {
+                      triggerHaptic('warning');
+                      deleteExpense(exp.id);
+                    }}
+                    style={{ padding: 4 }}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="trash-outline" size={16} color={colors.hotPink} />
+                  </Pressable>
+                </View>
               </Card>
             ))
           )}
@@ -531,12 +522,24 @@ export default function FinanceScreen() {
                       {formatAmount(item.price)}
                     </Text>
                   </View>
-                  <Button
-                    title={item.is_bought ? 'Bought! 🎉' : 'Buy Goal'}
-                    onPress={() => handleToggleBought(item)}
-                    variant={item.is_bought ? 'mint' : 'outline'}
-                    size="sm"
-                  />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Button
+                      title={item.is_bought ? 'Bought! 🎉' : 'Buy Goal'}
+                      onPress={() => handleToggleBought(item)}
+                      variant={item.is_bought ? 'mint' : 'outline'}
+                      size="sm"
+                    />
+                    <Pressable
+                      onPress={() => {
+                        triggerHaptic('warning');
+                        deleteWishlistItem(item.id);
+                      }}
+                      style={{ padding: 4 }}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="trash-outline" size={18} color={colors.hotPink} />
+                    </Pressable>
+                  </View>
                 </View>
 
                 {!item.is_bought && (

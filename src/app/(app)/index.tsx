@@ -22,7 +22,12 @@ import { ProgressBar } from '@/components/ui/ProgressBar';
 import { UrgeButton } from '@/components/dashboard/UrgeButton';
 import { StreakCard } from '@/components/dashboard/StreakCard';
 import { DailyMoodCheckIn } from '@/components/dashboard/DailyMoodCheckIn';
-import { OfflineStore } from '@/lib/offlineStore';
+import { SyncIndicator } from '@/components/ui/SyncIndicator';
+import { useStreaksData } from '@/hooks/queries/useStreaksData';
+import { useTasksData } from '@/hooks/queries/useTasksData';
+import { useHobbiesData } from '@/hooks/queries/useHobbiesData';
+import { useGoalsData } from '@/hooks/queries/useGoalsData';
+import { useFinanceData } from '@/hooks/queries/useFinanceData';
 import { computeFreeTimeStatus } from '@/hooks/useFreeTimeEngine';
 import { Database } from '@/types/database.types';
 import { NeoBorders, NeoRadii, NeoShadows } from '@/constants/theme';
@@ -39,16 +44,25 @@ export default function HomeScreen() {
   const { formatAmount } = useCurrencyStore();
   const { user } = useAuthStore();
 
-  const [refreshing, setRefreshing] = useState(false);
-  const [streaks, setStreaks] = useState<Streak[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
-  const [currentMood, setCurrentMood] = useState<number | null>(null);
+  const currentMonday = new Date();
+  currentMonday.setDate(currentMonday.getDate() - ((currentMonday.getDay() + 6) % 7));
+  const weekDateStr = currentMonday.toISOString().split('T')[0];
 
-  // Financial summary
-  const [weeklyAllowance, setWeeklyAllowance] = useState(0);
-  const [weeklySpent, setWeeklySpent] = useState(0);
+  const {
+    streaks,
+    checkin,
+    updateStreak,
+    createStreakLog,
+    createStreak,
+    upsertCheckin,
+  } = useStreaksData();
+  const { tasks } = useTasksData();
+  const { hobbies } = useHobbiesData();
+  const { goals, milestones } = useGoalsData();
+  const { weekData, expenses } = useFinanceData(weekDateStr);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const [currentMood, setCurrentMood] = useState<number | null>(null);
 
   // Restart Modal State
   const [restartModalVisible, setRestartModalVisible] = useState(false);
@@ -61,51 +75,13 @@ export default function HomeScreen() {
   const [newHabitName, setNewHabitName] = useState('');
   const [newHabitCategory, setNewHabitCategory] = useState('Digital');
 
-  const loadDashboardData = async () => {
-    if (!user) return;
-    try {
-      const currentMonday = new Date();
-      currentMonday.setDate(currentMonday.getDate() - ((currentMonday.getDay() + 6) % 7));
-      const weekDateStr = currentMonday.toISOString().split('T')[0];
-
-      const [loadedStreaks, loadedTasks, loadedGoals, loadedMilestones, loadedExpenses, weekData] =
-        await Promise.all([
-          OfflineStore.getStreaks(user.id),
-          OfflineStore.getTasks(user.id),
-          OfflineStore.getGoals(user.id),
-          OfflineStore.getMilestones(user.id),
-          OfflineStore.getExpenses(user.id),
-          OfflineStore.getFinanceWeek(weekDateStr, user.id),
-        ]);
-
-      setStreaks(loadedStreaks);
-      setTasks(loadedTasks);
-      setGoals(loadedGoals);
-      setMilestones(loadedMilestones);
-
-      if (weekData) {
-        setWeeklyAllowance(weekData.allowance_amount);
-      }
-
-      const totalSpent = loadedExpenses.reduce((acc, curr) => acc + Number(curr.amount), 0);
-      setWeeklySpent(totalSpent);
-    } catch {
-      // Fallback
-    }
-  };
-
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
-
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadDashboardData();
-    setRefreshing(false);
+    setTimeout(() => setRefreshing(false), 600);
   };
 
   // Computations
-  const freeTime = computeFreeTimeStatus(tasks, []);
+  const freeTime = computeFreeTimeStatus(tasks, hobbies);
   const pinnedGoal = goals.find((g) => g.is_pinned_of_week) || goals[0];
   const goalMilestones = pinnedGoal
     ? milestones.filter((m) => m.goal_id === pinnedGoal.id)
@@ -114,6 +90,8 @@ export default function HomeScreen() {
   const goalProgress =
     goalMilestones.length > 0 ? goalCompletedCount / goalMilestones.length : 0;
 
+  const weeklyAllowance = weekData?.allowance_amount || 0;
+  const weeklySpent = expenses.reduce((acc, curr) => acc + Number(curr.amount), 0);
   const budgetRemaining = Math.max(0, weeklyAllowance - weeklySpent);
 
   // Restart Streak handler (Relapse-friendly)
@@ -121,34 +99,21 @@ export default function HomeScreen() {
     if (!selectedStreak) return;
     triggerHaptic('warning');
 
-    const updated = streaks.map((s) => {
-      if (s.id === selectedStreak.id) {
-        return {
-          ...s,
-          started_at: new Date().toISOString(),
-        };
-      }
-      return s;
+    await updateStreak({
+      streakId: selectedStreak.id,
+      updates: {
+        started_at: new Date().toISOString(),
+      },
     });
 
-    setStreaks(updated);
-    if (user) {
-      await OfflineStore.saveStreaks(updated, user.id);
-
-      // Save log
-      const logs = await OfflineStore.getStreakLogs(user.id);
-      logs.push({
-        id: `log-${Date.now()}`,
-        user_id: user.id,
-        streak_id: selectedStreak.id,
-        event_type: 'restarted',
-        mood: currentMood,
-        trigger_reason: restartReason || 'Trigger moment',
-        notes: restartNotes,
-        occurred_at: new Date().toISOString(),
-      });
-      await OfflineStore.saveStreakLogs(logs, user.id);
-    }
+    await createStreakLog({
+      streak_id: selectedStreak.id,
+      event_type: 'restarted',
+      mood: checkin?.mood ?? currentMood,
+      trigger_reason: restartReason || 'Trigger moment',
+      notes: restartNotes,
+      occurred_at: new Date().toISOString(),
+    });
 
     setRestartModalVisible(false);
     setSelectedStreak(null);
@@ -161,21 +126,14 @@ export default function HomeScreen() {
     if (!newHabitName.trim() || !user) return;
     triggerHaptic('success');
 
-    const newStreak: Streak = {
-      id: `streak-${Date.now()}`,
-      user_id: user.id,
+    await createStreak({
       habit_name: newHabitName.trim(),
       category: newHabitCategory,
       started_at: new Date().toISOString(),
       longest_streak_days: 0,
       icon: 'shield',
       accent_color: '#FF5388',
-      created_at: new Date().toISOString(),
-    };
-
-    const nextStreaks = [...streaks, newStreak];
-    setStreaks(nextStreaks);
-    await OfflineStore.saveStreaks(nextStreaks, user.id);
+    });
 
     setNewHabitName('');
     setAddStreakModalVisible(false);
@@ -197,9 +155,12 @@ export default function HomeScreen() {
         {/* Top Header Banner */}
         <View style={styles.topHeader}>
           <View>
-            <Text style={[styles.greeting, { color: colors.text }]}>
-              WELCOME BACK 👋
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={[styles.greeting, { color: colors.text }]}>
+                WELCOME BACK 👋
+              </Text>
+              <SyncIndicator />
+            </View>
             <Text style={[styles.subtitle, { color: colors.muted }]}>
               RECLAIM YOUR TIME • FOCUS ON WHAT MATTERS
             </Text>
@@ -300,8 +261,14 @@ export default function HomeScreen() {
 
         {/* Daily Mood Check-In & Motivational Quote */}
         <DailyMoodCheckIn
-          currentMood={currentMood}
-          onSelectMood={(mood) => setCurrentMood(mood)}
+          currentMood={checkin?.mood ?? currentMood}
+          onSelectMood={async (mood) => {
+            setCurrentMood(mood);
+            await upsertCheckin({
+              mood,
+              journal_note: null,
+            });
+          }}
         />
 
         {/* Clean Streaks Section */}

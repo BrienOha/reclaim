@@ -18,6 +18,14 @@ import { Chip } from '@/components/ui/Chip';
 import { Modal } from '@/components/ui/Modal';
 import { Input } from '@/components/ui/Input';
 import { Sticker } from '@/components/ui/Sticker';
+import { SyncIndicator } from '@/components/ui/SyncIndicator';
+import { useProfileData } from '@/hooks/queries/useProfileData';
+import { TasksService } from '@/services/tasks.service';
+import { StreaksService } from '@/services/streaks.service';
+import { HobbiesService } from '@/services/hobbies.service';
+import { JournalService } from '@/services/journal.service';
+import { FinanceService } from '@/services/finance.service';
+import { GoalsService } from '@/services/goals.service';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { OfflineStore } from '@/lib/offlineStore';
 import { NeoBorders, NeoRadii, NeoShadows } from '@/constants/theme';
@@ -29,9 +37,10 @@ export default function SettingsScreen() {
   const { colors, mode, setMode } = useThemeStore();
   const { currency, setCurrencyCode } = useCurrencyStore();
   const { user, signOut } = useAuthStore();
+  const { profile, updateProfile } = useProfileData();
 
   const [displayName, setDisplayName] = useState(
-    user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'
+    profile?.display_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User'
   );
   const [profileSavedBanner, setProfileSavedBanner] = useState(false);
   const [exportSuccessBanner, setExportSuccessBanner] = useState(false);
@@ -43,16 +52,19 @@ export default function SettingsScreen() {
   const [dailyCheckinEnabled, setDailyCheckinEnabled] = useState(true);
   const [urgeNudgeEnabled, setUrgeNudgeEnabled] = useState(true);
 
+  React.useEffect(() => {
+    if (profile?.display_name) {
+      setDisplayName(profile.display_name);
+    }
+  }, [profile?.display_name]);
+
   const handleSaveProfile = async () => {
     triggerHaptic('success');
-    if (user && isSupabaseConfigured()) {
-      await supabase
-        .from('profiles')
-        .update({
-          display_name: displayName.trim(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', user.id);
+    if (user) {
+      await updateProfile({
+        display_name: displayName.trim(),
+        currency: currency.code,
+      });
     }
     setProfileSavedBanner(true);
     setTimeout(() => setProfileSavedBanner(false), 3000);
@@ -62,12 +74,12 @@ export default function SettingsScreen() {
     if (!user) return;
     triggerHaptic('success');
     const [streaks, tasks, hobbies, entries, expenses, goals] = await Promise.all([
-      OfflineStore.getStreaks(user.id),
-      OfflineStore.getTasks(user.id),
-      OfflineStore.getHobbies(user.id),
-      OfflineStore.getJournalEntries(user.id),
-      OfflineStore.getExpenses(user.id),
-      OfflineStore.getGoals(user.id),
+      StreaksService.getStreaks(user.id),
+      TasksService.getTasks(user.id),
+      HobbiesService.getHobbies(user.id),
+      JournalService.getJournalEntries(user.id),
+      FinanceService.getExpenses(user.id),
+      GoalsService.getGoals(user.id),
     ]);
 
     const backup = {
@@ -130,9 +142,12 @@ export default function SettingsScreen() {
         {/* Top Header */}
         <View style={styles.header}>
           <View>
-            <Text style={[styles.title, { color: colors.text }]}>
-              SETTINGS & PREFERENCES
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={[styles.title, { color: colors.text }]}>
+                SETTINGS & PREFERENCES
+              </Text>
+              <SyncIndicator />
+            </View>
             <Text style={[styles.subtitle, { color: colors.muted }]}>
               Personalize your theme, currency, data backup, and account.
             </Text>
